@@ -53,48 +53,22 @@ func (s *server) NewRouter() *gin.Engine {
 	router.Use(s.Dependencies.HTTPProvider.CORSMiddleware())
 	router.Use(s.Dependencies.HTTPProvider.RateLimitMiddleware())
 	router.Use(s.Dependencies.HTTPProvider.CSRFMiddleware())
-	router.Use(s.Dependencies.HTTPProvider.ClientCheckMiddleware())
 
-	router.GET("/", s.Dependencies.HTTPProvider.RootHandler())
+	multiTenant := s.Dependencies.AppConfig != nil && s.Dependencies.AppConfig.EnableMultiTenant
+
 	router.GET("/health", s.Dependencies.HTTPProvider.HealthHandler())
 	router.GET("/healthz", s.Dependencies.HTTPProvider.HealthHandler())
 	router.GET("/readyz", s.Dependencies.HTTPProvider.ReadyHandler())
-	router.POST("/graphql", s.Dependencies.HTTPProvider.GraphqlHandler())
-	router.GET("/playground", s.Dependencies.HTTPProvider.PlaygroundHandler())
-	router.GET("/oauth_login/:oauth_provider", s.Dependencies.HTTPProvider.OAuthLoginHandler())
-	router.GET("/oauth_callback/:oauth_provider", s.Dependencies.HTTPProvider.OAuthCallbackHandler())
-	router.POST("/oauth_callback/:oauth_provider", s.Dependencies.HTTPProvider.OAuthCallbackHandler())
-	router.GET("/verify_email", s.Dependencies.HTTPProvider.VerifyEmailHandler())
-	// OPEN ID routes
-	router.GET("/.well-known/openid-configuration", s.Dependencies.HTTPProvider.OpenIDConfigurationHandler())
-	router.GET("/.well-known/jwks.json", s.Dependencies.HTTPProvider.JWKsHandler())
-	router.GET("/authorize", s.Dependencies.HTTPProvider.AuthorizeHandler())
-	router.GET("/userinfo", s.Dependencies.HTTPProvider.UserInfoHandler())
-	router.GET("/logout", s.Dependencies.HTTPProvider.LogoutHandler())
-	router.POST("/logout", s.Dependencies.HTTPProvider.LogoutHandler())
-	router.POST("/oauth/token", s.Dependencies.HTTPProvider.TokenHandler())
-	router.POST("/oauth/revoke", s.Dependencies.HTTPProvider.RevokeRefreshTokenHandler())
-	router.POST("/oauth/introspect", s.Dependencies.HTTPProvider.IntrospectHandler())
 
-	// gRPC-gateway REST surface at /v1/*. Mounted only when the gRPC
-	// server is configured. Shares all gin middleware (CORS, security
-	// headers, rate limit, logging) automatically since the route group
-	// inherits them from `router.Use(...)` above.
-	if s.gatewayHandler != nil {
-		// The gateway's routes are registered with their full /v1/... path
-		// (driven by google.api.http annotations). Mount it as a catch-all
-		// under /v1 so gin matches the prefix and hands the full request
-		// path to grpc-gateway untouched.
-		gw := gin.WrapH(s.gatewayHandler)
-		router.Any("/v1/*path", gw)
-
-		// OpenAPI spec — generated alongside the gRPC stubs by buf and
-		// embedded into the binary (so it works regardless of cwd: tests,
-		// containers, etc.). Path is intentionally separate from the
-		// gateway mux so it doesn't fight a /v1/openapi.json gateway route.
-		router.GET("/openapi.json", func(c *gin.Context) {
-			c.Data(http.StatusOK, "application/json", openapi.Spec())
-		})
+	if multiTenant {
+		tenant := router.Group("/:tenant_id")
+		tenant.Use(s.Dependencies.HTTPProvider.TenantMiddleware())
+		tenant.Use(s.Dependencies.HTTPProvider.ClientCheckMiddleware())
+		s.mountAuthRoutes(tenant)
+		tenant.POST("/_warm", s.Dependencies.HTTPProvider.WarmTenantHandler())
+	} else {
+		router.Use(s.Dependencies.HTTPProvider.ClientCheckMiddleware())
+		s.mountAuthRoutes(router)
 	}
 
 	// Set up template functions for JSON encoding.
@@ -109,28 +83,6 @@ func (s *server) NewRouter() *gin.Engine {
 		},
 	})
 	router.LoadHTMLGlob("web/templates/*")
-	// // login page app related routes.
-	app := router.Group("/app")
-	{
-		app.Static("/favicon_io", "web/app/favicon_io")
-		appBuild := app.Group("/build")
-		appBuild.Use(spaBuildCacheMiddleware())
-		appBuild.Static("", "web/app/build")
-		app.GET("/", s.Dependencies.HTTPProvider.AppHandler())
-		app.GET("/:page", s.Dependencies.HTTPProvider.AppHandler())
-	}
-
-	// // dashboard related routes
-	dashboard := router.Group("/dashboard")
-	{
-		dashboard.Static("/favicon_io", "web/dashboard/favicon_io")
-		dashboardBuild := dashboard.Group("/build")
-		dashboardBuild.Use(spaBuildCacheMiddleware())
-		dashboardBuild.Static("", "web/dashboard/build")
-		dashboard.Static("/public", "web/dashboard/public")
-		dashboard.GET("/", s.Dependencies.HTTPProvider.DashboardHandler())
-		dashboard.GET("/:page", s.Dependencies.HTTPProvider.DashboardHandler())
-	}
 
 	// SPA fallback: any unmatched GET inside /app/ or /dashboard/ serves the
 	// SPA shell so deep links and browser refresh on multi-segment routes
@@ -157,4 +109,52 @@ func (s *server) NewRouter() *gin.Engine {
 		}
 	})
 	return router
+}
+
+func (s *server) mountAuthRoutes(group gin.IRouter) {
+	group.GET("/", s.Dependencies.HTTPProvider.RootHandler())
+	group.POST("/graphql", s.Dependencies.HTTPProvider.GraphqlHandler())
+	group.GET("/playground", s.Dependencies.HTTPProvider.PlaygroundHandler())
+	group.GET("/oauth_login/:oauth_provider", s.Dependencies.HTTPProvider.OAuthLoginHandler())
+	group.GET("/oauth_callback/:oauth_provider", s.Dependencies.HTTPProvider.OAuthCallbackHandler())
+	group.POST("/oauth_callback/:oauth_provider", s.Dependencies.HTTPProvider.OAuthCallbackHandler())
+	group.GET("/verify_email", s.Dependencies.HTTPProvider.VerifyEmailHandler())
+	group.GET("/.well-known/openid-configuration", s.Dependencies.HTTPProvider.OpenIDConfigurationHandler())
+	group.GET("/.well-known/jwks.json", s.Dependencies.HTTPProvider.JWKsHandler())
+	group.GET("/authorize", s.Dependencies.HTTPProvider.AuthorizeHandler())
+	group.GET("/userinfo", s.Dependencies.HTTPProvider.UserInfoHandler())
+	group.GET("/logout", s.Dependencies.HTTPProvider.LogoutHandler())
+	group.POST("/logout", s.Dependencies.HTTPProvider.LogoutHandler())
+	group.POST("/oauth/token", s.Dependencies.HTTPProvider.TokenHandler())
+	group.POST("/oauth/revoke", s.Dependencies.HTTPProvider.RevokeRefreshTokenHandler())
+	group.POST("/oauth/introspect", s.Dependencies.HTTPProvider.IntrospectHandler())
+
+	if s.gatewayHandler != nil {
+		gw := gin.WrapH(s.gatewayHandler)
+		group.Any("/v1/*path", gw)
+		group.GET("/openapi.json", func(c *gin.Context) {
+			c.Data(http.StatusOK, "application/json", openapi.Spec())
+		})
+	}
+
+	app := group.Group("/app")
+	{
+		app.Static("/favicon_io", "web/app/favicon_io")
+		appBuild := app.Group("/build")
+		appBuild.Use(spaBuildCacheMiddleware())
+		appBuild.Static("", "web/app/build")
+		app.GET("/", s.Dependencies.HTTPProvider.AppHandler())
+		app.GET("/:page", s.Dependencies.HTTPProvider.AppHandler())
+	}
+
+	dashboard := group.Group("/dashboard")
+	{
+		dashboard.Static("/favicon_io", "web/dashboard/favicon_io")
+		dashboardBuild := dashboard.Group("/build")
+		dashboardBuild.Use(spaBuildCacheMiddleware())
+		dashboardBuild.Static("", "web/dashboard/build")
+		dashboard.Static("/public", "web/dashboard/public")
+		dashboard.GET("/", s.Dependencies.HTTPProvider.DashboardHandler())
+		dashboard.GET("/:page", s.Dependencies.HTTPProvider.DashboardHandler())
+	}
 }

@@ -50,6 +50,12 @@ func (h *httpProvider) CSRFMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Exempt tenant warm (server-to-server provisioning; auth via X-Authorizer-Admin-Secret).
+		if strings.HasSuffix(c.Request.URL.Path, "/_warm") {
+			c.Next()
+			return
+		}
+
 		// === Origin / Referer enforcement ===
 		// Browsers always send Origin on cross-origin POST. A missing
 		// Origin header on a state-changing request is suspicious and

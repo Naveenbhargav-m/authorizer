@@ -16,6 +16,7 @@ import (
 	"github.com/authorizerdev/authorizer/internal/service"
 	"github.com/authorizerdev/authorizer/internal/sms"
 	"github.com/authorizerdev/authorizer/internal/storage"
+	"github.com/authorizerdev/authorizer/internal/tenant"
 	"github.com/authorizerdev/authorizer/internal/token"
 )
 
@@ -54,18 +55,28 @@ type Dependencies struct {
 
 // New constructs a new http provider with given arguments
 func New(cfg *config.Config, deps *Dependencies) (Provider, error) {
-	// TODO - Add any validation here for config and dependencies
 	g := &httpProvider{
 		Config:       cfg,
 		Dependencies: *deps,
+		MultiTenant:  cfg.EnableMultiTenant,
 	}
 	return g, nil
+}
+
+// ConfigureMultiTenant attaches the tenant pool to an http provider.
+func ConfigureMultiTenant(p Provider, pool *tenant.Pool) {
+	if hp, ok := p.(*httpProvider); ok {
+		hp.TenantPool = pool
+		hp.MultiTenant = true
+	}
 }
 
 // httpProvider is the struct that provides resolver functions for http routes.
 type httpProvider struct {
 	*config.Config
 	Dependencies
+	TenantPool *tenant.Pool
+	MultiTenant bool
 }
 
 // Ensure interface is implemented
@@ -128,4 +139,8 @@ type Provider interface {
 	MetricsHandler() gin.HandlerFunc
 	// SecurityHeadersMiddleware sets standard security headers on every response.
 	SecurityHeadersMiddleware() gin.HandlerFunc
+	// TenantMiddleware resolves per-tenant storage from the URL path.
+	TenantMiddleware() gin.HandlerFunc
+	// WarmTenantHandler pre-initializes tenant storage.
+	WarmTenantHandler() gin.HandlerFunc
 }

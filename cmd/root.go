@@ -31,6 +31,7 @@ import (
 	"github.com/authorizerdev/authorizer/internal/service"
 	"github.com/authorizerdev/authorizer/internal/sms"
 	"github.com/authorizerdev/authorizer/internal/storage"
+	"github.com/authorizerdev/authorizer/internal/tenant"
 	"github.com/authorizerdev/authorizer/internal/token"
 )
 
@@ -257,6 +258,15 @@ func init() {
 	f.StringVar(&rootArgs.config.FGAStore, "fga-store", "", "Override the OpenFGA datastore: 'sqlite', 'postgres', 'mysql', or 'memory' (dev). Default: reuse the main database when it is SQL-compatible; required only for unsupported main DBs (mongodb, dynamodb, …)")
 	f.StringVar(&rootArgs.config.FGAStoreURL, "fga-store-url", "", "Connection URI for an overridden --fga-store (file: URI for sqlite, DSN for postgres/mysql). Ignored when FGA reuses the main database")
 
+	// Multi-tenant (Nokodo) flags
+	f.BoolVar(&rootArgs.config.EnableMultiTenant, "multi-tenant", false, "Enable multi-tenant mode with /:tenant_id path routing and pooled DB connections")
+	f.StringVar(&rootArgs.config.PlatformDatabaseURL, "platform-database-url", "", "Platform database URL for builder auth (tenant: platform)")
+	f.StringVar(&rootArgs.config.AppDatabaseHost, "app-database-host", "", "Host for per-app tenant databases")
+	f.StringVar(&rootArgs.config.AppDatabasePort, "app-database-port", "5432", "Port for per-app tenant databases")
+	f.StringVar(&rootArgs.config.AppDatabaseUser, "app-database-user", "", "Username for per-app tenant databases")
+	f.StringVar(&rootArgs.config.AppDatabasePassword, "app-database-password", "", "Password for per-app tenant databases")
+	f.IntVar(&rootArgs.config.PoolTTLMinutes, "pool-ttl-minutes", 15, "Idle tenant pool eviction TTL in minutes")
+
 	// Deprecated flags
 	_ = f.MarkDeprecated("database_url", "use --database-url instead")
 	_ = f.MarkDeprecated("database_type", "use --database-type instead")
@@ -419,17 +429,37 @@ func runRoot(c *cobra.Command, args []string) {
 		strings.TrimSpace(rootArgs.config.TwilioSender) != ""
 
 	// Storage provider
-	storageProvider, err := storage.New(&rootArgs.config, &storage.Dependencies{
-		Log: &log,
-	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create storage provider")
-	}
-	defer func() {
-		if err := storageProvider.Close(); err != nil {
-			log.Error().Err(err).Msg("failed to close storage provider")
+	var storageProvider storage.Provider
+	var tenantPool *tenant.Pool
+	var tenantResolver *tenant.Resolver
+	if rootArgs.config.EnableMultiTenant {
+		var err error
+		storageProvider, tenantPool, tenantResolver, err = setupMultiTenantStorage(&rootArgs.config, &log)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to initialize multi-tenant storage")
 		}
-	}()
+		defer func() {
+			if tenantPool != nil {
+				_ = tenantPool.Close()
+			}
+			if tenantResolver != nil {
+				_ = tenantResolver.Close()
+			}
+		}()
+	} else {
+		var err error
+		storageProvider, err = storage.New(&rootArgs.config, &storage.Dependencies{
+			Log: &log,
+		})
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to create storage provider")
+		}
+		defer func() {
+			if err := storageProvider.Close(); err != nil {
+				log.Error().Err(err).Msg("failed to close storage provider")
+			}
+		}()
+	}
 
 	// Authenticator provider
 	authenticatorProvider, err := authenticators.New(&rootArgs.config, &authenticators.Dependencies{
@@ -568,6 +598,9 @@ func runRoot(c *cobra.Command, args []string) {
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create http provider")
+	}
+	if rootArgs.config.EnableMultiTenant {
+		http_handlers.ConfigureMultiTenant(httpProvider, tenantPool)
 	}
 
 	// gRPC server — listens on --grpc-port. The REST gateway built by

@@ -2,10 +2,12 @@ package http_handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/authorizerdev/authorizer/internal/metrics"
+	"github.com/authorizerdev/authorizer/internal/tenant"
 )
 
 // ClientCheckMiddleware is a middleware to verify the client ID
@@ -19,7 +21,7 @@ func (h *httpProvider) ClientCheckMiddleware() gin.HandlerFunc {
 			Str("path", c.Request.URL.Path).
 			Logger()
 		// Only check client ID for graphql route [Most relevant route for client ID check]
-		if c.Request.URL.Path != "/graphql" {
+		if c.Request.URL.Path != "/graphql" && !strings.Contains(c.Request.URL.Path, "/graphql") {
 			c.Next()
 			return
 		}
@@ -34,7 +36,12 @@ func (h *httpProvider) ClientCheckMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if clientID != h.Config.ClientID {
+		expectedClientID := h.Config.ClientID
+		if tenantCfg, ok := tenant.ConfigFromContext(c.Request.Context()); ok && tenantCfg.ClientID != "" {
+			expectedClientID = tenantCfg.ClientID
+		}
+
+		if clientID != expectedClientID {
 			// Record metric for client-id mismatch, but skip dashboard and app UI routes
 			// as those are internal requests that should not trigger security alerts.
 			metrics.RecordSecurityEvent("client_id_mismatch", "invalid_client_id")

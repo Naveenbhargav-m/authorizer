@@ -347,4 +347,17 @@ type Config struct {
 	// for sqlite, or a DSN for postgres/mysql. Ignored when FGA reuses the main
 	// database or for the memory store.
 	FGAStoreURL string
+
+	// Multi-tenant mode (Nokodo integration)
+	// EnableMultiTenant routes all auth APIs under /:tenant_id and pools DB connections per tenant.
+	EnableMultiTenant bool
+	// PlatformDatabaseURL is the builder/platform database (tenant key: "platform").
+	PlatformDatabaseURL string
+	// AppDatabaseHost/Port/User/Password build per-app database URLs for tenant resolution.
+	AppDatabaseHost     string
+	AppDatabasePort     string
+	AppDatabaseUser     string
+	AppDatabasePassword string
+	// PoolTTLMinutes controls idle tenant pool eviction.
+	PoolTTLMinutes int
 }

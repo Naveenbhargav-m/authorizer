@@ -12,7 +12,13 @@ import (
 // It performs a storage health check and returns 200 if healthy or 503 if not.
 func (h *httpProvider) HealthHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if err := h.Dependencies.StorageProvider.HealthCheck(c.Request.Context()); err != nil {
+		var err error
+		if h.MultiTenant && h.TenantPool != nil {
+			err = h.TenantPool.PlatformHealthCheck(c.Request.Context())
+		} else {
+			err = h.Dependencies.StorageProvider.HealthCheck(c.Request.Context())
+		}
+		if err != nil {
 			h.Dependencies.Log.Error().Err(err).Msg("storage health check failed")
 			metrics.DBHealthCheckTotal.WithLabelValues("unhealthy").Inc()
 			c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -30,7 +36,13 @@ func (h *httpProvider) HealthHandler() gin.HandlerFunc {
 // It checks storage health and returns 200 if ready or 503 if not.
 func (h *httpProvider) ReadyHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if err := h.Dependencies.StorageProvider.HealthCheck(c.Request.Context()); err != nil {
+		var err error
+		if h.MultiTenant && h.TenantPool != nil {
+			err = h.TenantPool.PlatformHealthCheck(c.Request.Context())
+		} else {
+			err = h.Dependencies.StorageProvider.HealthCheck(c.Request.Context())
+		}
+		if err != nil {
 			h.Dependencies.Log.Error().Err(err).Msg("storage health check failed in readiness probe")
 			metrics.DBHealthCheckTotal.WithLabelValues("unhealthy").Inc()
 			c.JSON(http.StatusServiceUnavailable, gin.H{
