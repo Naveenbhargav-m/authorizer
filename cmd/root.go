@@ -265,7 +265,7 @@ func init() {
 	f.StringVar(&rootArgs.config.AppDatabasePort, "app-database-port", "5432", "Port for per-app tenant databases")
 	f.StringVar(&rootArgs.config.AppDatabaseUser, "app-database-user", "", "Username for per-app tenant databases")
 	f.StringVar(&rootArgs.config.AppDatabasePassword, "app-database-password", "", "Password for per-app tenant databases")
-	f.IntVar(&rootArgs.config.PoolTTLMinutes, "pool-ttl-minutes", 15, "Idle tenant pool eviction TTL in minutes")
+	f.IntVar(&rootArgs.config.PoolTTLMinutes, "pool-ttl-minutes", 120, "Idle tenant pool eviction TTL in minutes")
 
 	// Deprecated flags
 	_ = f.MarkDeprecated("database_url", "use --database-url instead")

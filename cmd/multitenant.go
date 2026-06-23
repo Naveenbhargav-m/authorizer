@@ -49,7 +49,7 @@ func setupMultiTenantStorage(cfg *config.Config, log *zerolog.Logger) (storage.P
 	}
 	ttl := time.Duration(cfg.PoolTTLMinutes) * time.Minute
 	if ttl <= 0 {
-		ttl = 15 * time.Minute
+		ttl = 120 * time.Minute
 	}
 	pool := tenant.NewPool(cfg, log, resolver, ttl)
 	if err := pool.Warm(context.Background(), tenant.PlatformTenantID); err != nil {
